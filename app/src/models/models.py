@@ -40,17 +40,17 @@ class Users(DefaultMixin, Base):
     last_name = Column(String(length=255), nullable=True)
 
     @validates('email')
-    async def validate_email(self, key, value):
+    def validate_email(self, key, value):
         if not value:
             raise AssertionError('No email provided')
-        if not await re.match(r"^(.+)(\@)(\w+)(\.)(\w{2,30})$", value):
+        if not re.match(r"^(.+)(\@)(\w+)(\.)(\w{2,30})$", value):
             raise AssertionError('Provided email is not an email address')
         return value
 
     @validates('password_hash')
-    async def validate_password_hash(self, key, value):
+    def validate_password_hash(self, key, value):
         if not value:
             raise AssertionError('No password hash provided')
-        if not await re.match(r'^\$2[ayb]\$.{56}$', value):
+        if not re.match(r'^\$2[ayb]\$.{56}$', value):
             raise AssertionError('Provided password hash is not a bcrypt hash')
         return value

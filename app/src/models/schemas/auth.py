@@ -9,19 +9,19 @@ from models.schemas.base import BaseSchemaModel, BaseFullModelMixin
 
 class UserBase(BaseSchemaModel):
     username: str
-    email: builtin_uuid.UUID
+    email: str
     first_name: Optional[str]
     last_name: Optional[str]
 
-    @validator('email')
-    def validate_email(cls, value):
-        if not await re.match(r"^(.+)(\@)(\w+)(\.)(\w{2,30})$", value):
-            raise AssertionError('Provided email is not an email address')
-        return value
+    # @validator('email')
+    # async def validate_email(cls, value):
+    #     if not await re.match(r"^(.+)(\@)(\w+)(\.)(\w{2,30})$", value):
+    #         raise AssertionError('Provided email is not an email address')
+    #     return value
 
 
 class UserCreate(UserBase):
-    pass
+    password_hash: str
 
 
 class UserUpdate(UserBase):

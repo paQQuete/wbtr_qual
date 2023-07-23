@@ -1,11 +1,10 @@
 import uuid
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.models import Users as UserModel
 from models.schemas.auth import User, UserCreate, UserUpdate
-from crud_base import update_instance, read_instance, delete_instance
+from services.crud.base import update_instance, read_instance, delete_instance
 
 
 async def create_user(db: AsyncSession, user: User | UserCreate) -> UserModel:
@@ -36,3 +35,8 @@ async def get_user_by_email(db: AsyncSession, email: str) -> UserModel | None:
 async def update_user(db: AsyncSession, user_info: UserUpdate) -> UserModel:
     """Update user with provided data"""
     return await update_instance(db=db, model=UserModel, instance_id=user_info.id, data_dict=user_info.dict())
+
+
+async def delete_user(db: AsyncSession, user_id: uuid.UUID):
+    """Delete user with provided id"""
+    return await delete_instance(db=db, model=UserModel, instance_id=user_id)

@@ -7,7 +7,7 @@ from jose import jwt
 from core.config import SETTINGS
 
 
-def create_token():
+def _create_token():
     def wrapper(fn):
         @wraps(fn)
         def decorator(*args, **kwargs):
@@ -34,11 +34,25 @@ def create_token():
     return wrapper
 
 
-@create_token()
+@_create_token()
 def create_access_token(subject: Union[str, Any], expires_delta: int = None, _encoded_jwt: str = None) -> str:
+    """
+
+    :param subject: id of user
+    :param expires_delta: expires in minutes
+    :param _encoded_jwt:
+    :return: JWT access token
+    """
     return _encoded_jwt
 
 
-@create_token()
+@_create_token()
 def create_refresh_token(subject: Union[str, Any], expires_delta: int = None, _encoded_jwt: str = None) -> str:
+    """
+
+    :param subject: id of user
+    :param expires_delta: expires in minutes
+    :param _encoded_jwt:
+    :return: JWT refresh token
+    """
     return _encoded_jwt
