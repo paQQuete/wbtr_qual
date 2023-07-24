@@ -7,4 +7,4 @@ redis_pool: Optional[ConnectionPool] = None
 
 
 async def get_redis() -> Redis:
-    return aioredis.Redis(connection_pool=redis_pool)
+    return aioredis.Redis(connection_pool=redis_pool, decode_responses=True)
