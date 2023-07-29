@@ -2,7 +2,6 @@ from http import HTTPStatus
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Form, Body
-from fastapi.security import OAuth2PasswordBearer
 from redis.asyncio.client import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,10 +11,9 @@ from db.database import get_db
 from db.redis_inj import get_redis
 from services.crud.users import create_user, get_user_by_email, get_user_by_username
 from services.password import get_hashed_password, verify_password
-from services.jwt import create_access_token, create_refresh_token, JWTBearer, blacklisting
+from services.jwt import create_access_token, create_refresh_token, JWTBearer, blacklisting, check_blacklist
 
 router = APIRouter()
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 
 @router.post('/signup', response_model=User)
@@ -37,34 +35,52 @@ async def login_user(email: Annotated[str, Form()], password: Annotated[str, For
     return create_access_token(subject=user.id), create_refresh_token(subject=user.id)
 
 
-@router.post('/just_check')
-async def check_token(token=Depends(JWTBearer())):
-    return token
+@router.post('/reroll')
+async def reroll_tokens(refresh_token: Annotated[str, Body(embed=True)], redis: Redis = Depends(get_redis)):
+    # TODO
+    # для избежания проблемы с угоном рефреша (и с тем что угонщик сможет бесконечно получать аксесы по угнанному рефрешу) - нужно
+    # писать в постгрю выданные рефреш токены.
+    # (кейс взлома - Алиса работает, у неё Боб угоняет оба токена, Боб через время идёт менять рефреш на новые токены, гуляет с ними
+    #  , в это время рефреш который у Алисы не сработает при обновлении аксесса, она логиниться и получают новую пару, но
+    #  у Боба его полученный рефреш будет работать дальше)
+    #
+    # Чтобы этого избежать - нужно писать выданные рефреш токены, с отношением к юзеру, в таком случае кейс
+    # Алиса работает, теряет оба токена, Боб роллит себе новый аксес по рефрешу, тем самым обновляя запись в постгре о рефреше -
+    # Алиса не сможет получить новый аксес, т.к. по данныцм постгри рефреш у неё неактуальный, она логиниться заново, получает пару токенов,
+    # актуальный рефреш Алисы заносится в постгрю, Боб сосёт бибу, профит.
+    #
+    #     план:
+    #     написать модель для рефреш токенов в постгре DONE
+    #     переделать миграции DONE
+    #     круд для рефреш токенов
+    #     дополнение ручек логин, логаут, рефреш токен
+    #           (теперь не надо банить рефреш при обнове аксеса - мы защищены)??? че я написал, мб неправильноя строка
+
+    # ВАЖНО - для того чтобы поддерживать схему на неск устройствах и оставаться безопасными - вводить в токены в постгрю отпечаток девайса
+    # пусть это будет юзерагент
+    # и должно быть ограничение на уникальность пары ЮА-ЮзерАйди, И ВАЖНО - девайс айди пишется в токены ТОЛЬКО в момент логина, так
+    # при угоне токена и посл. роллов аксессов Боба - Алисин рефреш сразу инвалидируется, т.к. в постгре будет запись об актуальном рефреше который
+    # сделал себе Боб. Алиса через 15 минут не сможет обновить аксесс - пойдет вводить логин и пароль, получит токены, актуальный токен для
+    # этого устройства обновиться в постгре. ПРОФИТ
+
+    if token := JWTBearer.verify_jwt(refresh_token) and not await check_blacklist(redis, refresh_token):
+        await blacklisting(redis=redis, token=refresh_token)
+        return create_access_token(subject=token['sub']), create_refresh_token(subject=token['sub'])
+    else:
+        raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail="Invalid token or expired token.")
 
 
 @router.post('/logout')
-async def logout(refresh_token: str, access_token=Depends(JWTBearer()), redis: Redis = Depends(get_redis)):
-    await blacklisting(redis=redis, token_or_jti=refresh_token)
-    await blacklisting(redis=redis, token_or_jti=access_token)
-    return HTTPStatus.OK
+async def logout(refresh_token: Annotated[str, Body(embed=True)], access_token: Annotated[str, Depends(JWTBearer())],
+                 redis: Redis = Depends(get_redis)):
+    if not await check_blacklist(redis=redis, token_or_jti=refresh_token):
+        await blacklisting(redis=redis, token=refresh_token)
+    else:
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED)
 
+    if not await check_blacklist(redis=redis, token_or_jti=access_token):
+        await blacklisting(redis=redis, token=access_token)
+    else:
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED)
 
-@router.post('/logout_debug')
-async def logout_debg(refresh_token: Annotated[str, Body(embed=True)], access_token: Annotated[str, Depends(oauth2_scheme)],
-                      redis: Redis = Depends(get_redis)):
-    await blacklisting(redis=redis, token_or_jti=refresh_token)
-    await blacklisting(redis=redis, token_or_jti=access_token)
-    # TODO
-    #  File "/home/boris/PycharmProjects/wbtr_qual/app/src/api/v1/auth.py", line 56, in logout_debg
-    #     await blacklisting(redis=redis, token_or_jti=access_token)
-    #   File "/home/boris/PycharmProjects/wbtr_qual/app/src/services/jwt.py", line 74, in blacklisting
-    #     token = jwt.decode(
-    #             ^^^^^^^^^^^
-    #   File "/home/boris/PycharmProjects/wbtr_qual/venv/lib/python3.11/site-packages/jose/jwt.py", line 157, in decode
-    #     _validate_claims(
-    #   File "/home/boris/PycharmProjects/wbtr_qual/venv/lib/python3.11/site-packages/jose/jwt.py", line 481, in _validate_claims
-    #     _validate_exp(claims, leeway=leeway)
-    #   File "/home/boris/PycharmProjects/wbtr_qual/venv/lib/python3.11/site-packages/jose/jwt.py", line 314, in _validate_exp
-    #     raise ExpiredSignatureError("Signature has expired.")
-    # jose.exceptions.ExpiredSignatureError: Signature has expired.
     return HTTPStatus.OK

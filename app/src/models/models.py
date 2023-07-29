@@ -3,7 +3,7 @@ import re
 import uuid
 import enum
 
-from sqlalchemy import Column, Integer, DateTime, Enum, String, ForeignKey, Float, Boolean, Index
+from sqlalchemy import Column, Integer, DateTime, Enum, String, ForeignKey, Float, Boolean, Index, UniqueConstraint
 from sqlalchemy_utils.types.uuid import UUIDType
 from sqlalchemy.orm import relationship, validates
 
@@ -39,6 +39,8 @@ class Users(DefaultMixin, Base):
     first_name = Column(String(length=255), nullable=True)
     last_name = Column(String(length=255), nullable=True)
 
+    refresh_tokens = relationship('RefreshTokens', back_populates='user')
+
     @validates('email')
     def validate_email(self, key, value):
         if not value:
@@ -54,3 +56,15 @@ class Users(DefaultMixin, Base):
         if not re.match(r'^\$2[ayb]\$.{56}$', value):
             raise AssertionError('Provided password hash is not a bcrypt hash')
         return value
+
+
+class RefreshTokens(DefaultMixin, Base):
+    __tablename__ = 'refresh_tokens'
+    __table_args__ = (UniqueConstraint('useragent', 'user_id', name='ua_user_uniq_constr'),
+                      {'schema': 'content'},
+                      )
+
+    refresh_token = Column(String, nullable=False)
+    useragent = Column(String, nullable=False)
+    user_id = Column(UUIDType(binary=False), ForeignKey('content.users.id', ondelete='CASCADE'), nullable=False)
+

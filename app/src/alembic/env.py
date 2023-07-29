@@ -1,6 +1,20 @@
 import os
 import sys
 
+if hasattr(sys, 'real_prefix'):
+    print("Используется virtualenv или venv. Путь: ", sys.prefix)
+elif sys.base_prefix != sys.prefix:
+    print("Используется venv. Путь: ", sys.prefix)
+else:
+    print("Не используется ни venv, ни virtualenv")
+
+import pkg_resources
+
+dists = [d for d in pkg_resources.working_set]
+for i in dists:
+    print(i)
+
+
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
