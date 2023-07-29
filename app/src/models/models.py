@@ -64,7 +64,7 @@ class RefreshTokens(DefaultMixin, Base):
                       {'schema': 'content'},
                       )
 
-    refresh_token = Column(String, nullable=False)
+    refresh_token = Column(String, nullable=False, unique=True)
     useragent = Column(String, nullable=False)
     user_id = Column(UUIDType(binary=False), ForeignKey('content.users.id', ondelete='CASCADE'), nullable=False)
 
