@@ -39,7 +39,7 @@ class Users(DefaultMixin, Base):
     first_name = Column(String(length=255), nullable=True)
     last_name = Column(String(length=255), nullable=True)
 
-    refresh_tokens = relationship('RefreshTokens', back_populates='user')
+    refresh_tokens = relationship('RefreshTokens', backref='user')
 
     @validates('email')
     def validate_email(self, key, value):

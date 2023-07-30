@@ -6,6 +6,7 @@ from typing import Union, Any
 from http import HTTPStatus
 
 from jose import jwt
+from jose.exceptions import JWTError, ExpiredSignatureError, JWTClaimsError
 from redis.asyncio.client import Redis
 from fastapi import Request, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -38,7 +39,8 @@ def _create_token():
                 "nbf": datetime.utcnow(),
                 "jti": str(uuid.uuid4()),
                 "iat": datetime.utcnow(),
-                "token_type": token_type
+                "token_type": token_type,
+                "useragent": str(kwargs['useragent'])
             }
             encoded_jwt = jwt.encode(
                 to_encode, SETTINGS.JWT.SECRET_KEY, SETTINGS.JWT.ALGORITHM
@@ -54,7 +56,7 @@ def _create_token():
 
 
 @_create_token()
-def create_access_token(subject: Union[str, Any], expires_delta: int = None, _encoded_jwt: str = None) -> str:
+def create_access_token(subject: Union[str, Any], useragent: str, expires_delta: int = None, _encoded_jwt: str = None) -> str:
     """
 
     :param subject: id of user
@@ -66,7 +68,7 @@ def create_access_token(subject: Union[str, Any], expires_delta: int = None, _en
 
 
 @_create_token()
-def create_refresh_token(subject: Union[str, Any], expires_delta: int = None, _encoded_jwt: str = None) -> str:
+def create_refresh_token(subject: Union[str, Any], useragent: str, expires_delta: int = None, _encoded_jwt: str = None) -> str:
     """
 
     :param subject: id of user
@@ -78,6 +80,12 @@ def create_refresh_token(subject: Union[str, Any], expires_delta: int = None, _e
 
 
 async def blacklisting(redis: Redis, token: str):
+    """
+    Write token to blacklist (Redis)
+    :param redis:
+    :param token: encoded JWT
+    :return:
+    """
     if token := JWTBearer.verify_jwt(token):
         await redis.set(
             name=token['jti'],
@@ -117,6 +125,6 @@ class JWTBearer(HTTPBearer):
             payload = jwt.decode(jwtoken,
                                  key=SETTINGS.JWT.SECRET_KEY,
                                  algorithms=SETTINGS.JWT.ALGORITHM)
-        except:
+        except (JWTError, JWTClaimsError, ExpiredSignatureError):
             payload = None
         return payload if payload else False

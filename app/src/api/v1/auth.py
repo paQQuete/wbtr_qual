@@ -1,7 +1,7 @@
 from http import HTTPStatus
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Form, Body
+from fastapi import APIRouter, Depends, HTTPException, Form, Body, Header
 from redis.asyncio.client import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +10,9 @@ from models.schemas.auth import UserCreate, User
 from db.database import get_db
 from db.redis_inj import get_redis
 from services.crud.users import create_user, get_user_by_email, get_user_by_username
+from services.crud.refresh_tokens import create_token, get_tokens_by_user_id, get_token_by_token, \
+    update_token_by_ua_uid, \
+    delete_token, get_token_by_ua_uid
 from services.password import get_hashed_password, verify_password
 from services.jwt import create_access_token, create_refresh_token, JWTBearer, blacklisting, check_blacklist
 
@@ -27,59 +30,45 @@ async def signup_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
 
 @router.post('/login')
 async def login_user(email: Annotated[str, Form()], password: Annotated[str, Form()],
-                     db: AsyncSession = Depends(get_db)):
+                     db: AsyncSession = Depends(get_db), redis: Redis = Depends(get_redis), user_agent: str = Header()):
     if not (user := await get_user_by_email(db=db, email=email)):
         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=HTTPErrorDetails.BAD_REQUEST.value)
     if not verify_password(password=password, hashed_pass=user.password_hash):
         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=HTTPErrorDetails.BAD_REQUEST.value)
-    return create_access_token(subject=user.id), create_refresh_token(subject=user.id)
+
+    access, refresh = create_access_token(subject=user.id, useragent=user_agent), \
+        create_refresh_token(subject=user.id, useragent=user_agent)
+
+    if old_refresh_model_instance := await get_token_by_ua_uid(db=db, useragent=user_agent, user_id=user.id):
+        await blacklisting(redis=redis, token=old_refresh_model_instance.refresh_token)
+        await update_token_by_ua_uid(db=db, new_token=refresh, user_id=user.id, useragent=user_agent)
+    else:
+        await create_token(db=db, refresh_token=refresh, useragent=user_agent, user_id=user.id)
+    return access, refresh
 
 
 @router.post('/reroll')
-async def reroll_tokens(refresh_token: Annotated[str, Body(embed=True)], redis: Redis = Depends(get_redis)):
-    # TODO
-    # для избежания проблемы с угоном рефреша (и с тем что угонщик сможет бесконечно получать аксесы по угнанному рефрешу) - нужно
-    # писать в постгрю выданные рефреш токены.
-    # (кейс взлома - Алиса работает, у неё Боб угоняет оба токена, Боб через время идёт менять рефреш на новые токены, гуляет с ними
-    #  , в это время рефреш который у Алисы не сработает при обновлении аксесса, она логиниться и получают новую пару, но
-    #  у Боба его полученный рефреш будет работать дальше)
-    #
-    # Чтобы этого избежать - нужно писать выданные рефреш токены, с отношением к юзеру, в таком случае кейс
-    # Алиса работает, теряет оба токена, Боб роллит себе новый аксес по рефрешу, тем самым обновляя запись в постгре о рефреше -
-    # Алиса не сможет получить новый аксес, т.к. по данныцм постгри рефреш у неё неактуальный, она логиниться заново, получает пару токенов,
-    # актуальный рефреш Алисы заносится в постгрю, Боб сосёт бибу, профит.
-    #
-    #     план:
-    #     написать модель для рефреш токенов в постгре DONE
-    #     переделать миграции DONE
-    #     круд для рефреш токенов DONE (черновой вариант)
-    #     дополнение ручек логин, логаут, рефреш токен
-    #           (теперь не надо банить рефреш при обнове аксеса - мы защищены)??? че я написал, мб неправильноя строка
-
-    # ВАЖНО - для того чтобы поддерживать схему на неск устройствах и оставаться безопасными - вводить в токены в постгрю отпечаток девайса
-    # пусть это будет юзерагент
-    # и должно быть ограничение на уникальность пары ЮА-ЮзерАйди, И ВАЖНО - девайс айди пишется в токены ТОЛЬКО в момент логина, так
-    # при угоне токена и посл. роллов аксессов Боба - Алисин рефреш сразу инвалидируется, т.к. в постгре будет запись об актуальном рефреше который
-    # сделал себе Боб. Алиса через 15 минут не сможет обновить аксесс - пойдет вводить логин и пароль, получит токены, актуальный токен для
-    # этого устройства обновиться в постгре. ПРОФИТ
-
-    if token := JWTBearer.verify_jwt(refresh_token) and not await check_blacklist(redis, refresh_token):
+async def reroll_tokens(refresh_token: Annotated[str, Body(embed=True)],
+                        redis: Redis = Depends(get_redis), db: AsyncSession = Depends(get_db),
+                        user_agent: str = Header()):
+    if (token := JWTBearer.verify_jwt(refresh_token)) and not await check_blacklist(redis, refresh_token):
+        access, refresh = create_access_token(subject=token['sub'], useragent=user_agent), \
+            create_refresh_token(subject=token['sub'], useragent=user_agent)
+        await update_token_by_ua_uid(db=db, new_token=refresh, user_id=token['sub'], useragent=token['useragent'])
         await blacklisting(redis=redis, token=refresh_token)
-        return create_access_token(subject=token['sub']), create_refresh_token(subject=token['sub'])
+        return access, refresh
     else:
         raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail="Invalid token or expired token.")
 
 
 @router.post('/logout')
-async def logout(refresh_token: Annotated[str, Body(embed=True)], access_token: Annotated[str, Depends(JWTBearer())],
-                 redis: Redis = Depends(get_redis)):
-    if not await check_blacklist(redis=redis, token_or_jti=refresh_token):
-        await blacklisting(redis=redis, token=refresh_token)
-    else:
-        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED)
-
-    if not await check_blacklist(redis=redis, token_or_jti=access_token):
+async def logout(access_token: Annotated[str, Depends(JWTBearer())], user_agent: str = Header(),
+                 redis: Redis = Depends(get_redis), db: AsyncSession = Depends(get_db)):
+    if (access_payload := JWTBearer.verify_jwt(access_token)) and not await check_blacklist(redis, access_token):
+        refresh_token_orm_instance = await get_token_by_ua_uid(db=db, useragent=user_agent, user_id=access_payload['sub'])
+        await blacklisting(redis=redis, token=refresh_token_orm_instance.refresh_token)
         await blacklisting(redis=redis, token=access_token)
+        await delete_token(db=db, refresh_token=refresh_token_orm_instance.refresh_token)
     else:
         raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED)
 

@@ -6,10 +6,16 @@ from sqlalchemy.orm.exc import NoResultFound
 
 
 async def read_instance(db: AsyncSession, model, condition: ClauseElement):
-    """Get an object by condition, return None if user with provided condition does not exist"""
+    """Get an object by condition, return None if object with provided condition does not exist"""
     instance = await db.execute(select(model).where(condition))
     instance = instance.scalar()
     return instance if instance else None
+
+async def read_batch_instance(db: AsyncSession, model, condition: ClauseElement):
+    """Get list an objects by condition, return None if objects with provided condition does not exist"""
+    instance = await db.execute(select(model).where(condition))
+    list_instances = instance.all()
+    return list_instances if len(list_instances) else None
 
 
 async def update_instance(db: AsyncSession, model, instance_id: uuid.UUID, data_dict: dict):
