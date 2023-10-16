@@ -38,23 +38,23 @@ async def get_tokens_by_user_id(db: AsyncSession, refresh_token: dict) -> list[R
     :return: JWT access token
     """
     return await read_batch_instance(db=db, model=RefreshTokensModel,
-                               condition=RefreshTokensModel.user_id == refresh_token['sub'])
+                                     condition=RefreshTokensModel.user_id == refresh_token['sub'])
 
 
 async def update_token_by_ua_uid(db: AsyncSession, new_token: str, user_id: uuid.UUID, useragent) -> RefreshTokensModel:
     instance = await read_instance(db=db, model=RefreshTokensModel,
                                    condition=RefreshTokensModel.user_id == user_id and RefreshTokensModel.useragent == useragent)
-    if instance:
-        return await update_instance(
-            db=db, model=RefreshTokensModel, instance_id=instance.id, data_dict={
-                "user_id": user_id,
-                "useragent": useragent,
-                "updated_at": datetime.datetime.utcnow(),
-                "refresh_token": new_token
-            }
-        )
-    else:
+    if not instance:
         raise NoResultFound
+
+    return await update_instance(
+        db=db, model=RefreshTokensModel, instance_id=instance.id, data_dict={
+            "user_id": user_id,
+            "useragent": useragent,
+            "updated_at": datetime.datetime.utcnow(),
+            "refresh_token": new_token
+        }
+    )
 
 
 async def delete_token(db: AsyncSession, refresh_token: str):

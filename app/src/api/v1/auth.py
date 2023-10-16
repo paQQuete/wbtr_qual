@@ -51,25 +51,25 @@ async def login_user(email: Annotated[str, Form()], password: Annotated[str, For
 async def reroll_tokens(refresh_token: Annotated[str, Body(embed=True)],
                         redis: Redis = Depends(get_redis), db: AsyncSession = Depends(get_db),
                         user_agent: str = Header()):
-    if (token := JWTBearer.verify_jwt(refresh_token)) and not await check_blacklist(redis, refresh_token):
-        access, refresh = create_access_token(subject=token['sub'], useragent=user_agent), \
-            create_refresh_token(subject=token['sub'], useragent=user_agent)
-        await update_token_by_ua_uid(db=db, new_token=refresh, user_id=token['sub'], useragent=token['useragent'])
-        await blacklisting(redis=redis, token=refresh_token)
-        return access, refresh
-    else:
+    if not (token := JWTBearer.verify_jwt(refresh_token)) and await check_blacklist(redis, refresh_token):
         raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail="Invalid token or expired token.")
+
+    access, refresh = create_access_token(subject=token['sub'], useragent=user_agent), \
+        create_refresh_token(subject=token['sub'], useragent=user_agent)
+    await update_token_by_ua_uid(db=db, new_token=refresh, user_id=token['sub'], useragent=token['useragent'])
+    await blacklisting(redis=redis, token=refresh_token)
+    return access, refresh
 
 
 @router.post('/logout')
 async def logout(access_token: Annotated[str, Depends(JWTBearer())], user_agent: str = Header(),
                  redis: Redis = Depends(get_redis), db: AsyncSession = Depends(get_db)):
-    if (access_payload := JWTBearer.verify_jwt(access_token)) and not await check_blacklist(redis, access_token):
-        refresh_token_orm_instance = await get_token_by_ua_uid(db=db, useragent=user_agent, user_id=access_payload['sub'])
-        await blacklisting(redis=redis, token=refresh_token_orm_instance.refresh_token)
-        await blacklisting(redis=redis, token=access_token)
-        await delete_token(db=db, refresh_token=refresh_token_orm_instance.refresh_token)
-    else:
+    if not (access_payload := JWTBearer.verify_jwt(access_token)) and await check_blacklist(redis, access_token):
         raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED)
 
+    refresh_token_orm_instance = await get_token_by_ua_uid(db=db, useragent=user_agent,
+                                                           user_id=access_payload['sub'])
+    await blacklisting(redis=redis, token=refresh_token_orm_instance.refresh_token)
+    await blacklisting(redis=redis, token=access_token)
+    await delete_token(db=db, refresh_token=refresh_token_orm_instance.refresh_token)
     return HTTPStatus.OK
